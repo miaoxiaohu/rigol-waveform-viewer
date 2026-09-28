@@ -8,6 +8,8 @@
 
 [简体中文](README.md) · English
 
+**Live demo → https://miaoxiaohu.github.io/rigol-waveform-viewer/**
+
 ![Screenshot](docs/screenshot.png)
 
 ## Why

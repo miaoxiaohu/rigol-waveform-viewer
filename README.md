@@ -6,6 +6,8 @@
 [![deps](https://img.shields.io/badge/dependencies-0-success.svg)]()
 [![build](https://img.shields.io/badge/build-none%20required-brightgreen.svg)]()
 
+**在线演示 → https://miaoxiaohu.github.io/rigol-waveform-viewer/**
+
 ![界面截图](docs/screenshot.png)
 
 ## 为什么做这个
