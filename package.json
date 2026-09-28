@@ -1,0 +1,14 @@
+{
+  "name": "rigol-waveform-viewer",
+  "version": "1.0.0",
+  "description": "Single-file, zero-dependency viewer for RIGOL oscilloscope .bin captures",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "sample": "node tools/make-sample-bin.js",
+    "verify": "node tools/verify-sample.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

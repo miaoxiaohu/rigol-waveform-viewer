@@ -1,0 +1,2433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RIGOL 波形查看器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --line: #e4e4e7;
+    --line-soft: #f1f1f4;
+    --text: #14171e;
+    --muted: #71717a;
+    --subtle: #a1a1aa;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, 0.08);
+    --accent-soft-2: rgba(59, 130, 246, 0.14);
+    --ch1: #FFE600;
+    --ch2: #00FFFF;
+    --ch3: #FF00FF;
+    --ch4: #0080FF;
+    --ref: #8b5cf6;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* 视觉上隐藏，但保留在无障碍树 / 键盘焦点顺序里。
+     原先用的 hidden 属性会把 input 整个移出可交互树，键盘用户和自动化工具都够不着。 */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  html, body {
+    height: 100%;
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
+  .brand-mark {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    display: grid;
+    place-items: center;
+    color: white;
+  }
+
+  .brand-mark svg { width: 14px; height: 14px; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .file-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: var(--accent);
+    color: white;
+    border-radius: 8px;
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+
+  .file-btn:hover { background: #2563eb; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .file-btn:active { transform: translateY(0); }
+  .file-btn svg { width: 14px; height: 14px; }
+
+  .file-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* MAIN LAYOUT */
+  main {
+    display: grid;
+    grid-template-columns: 280px 1fr 340px;
+    overflow: hidden;
+    transition: grid-template-columns 0.2s ease;
+  }
+  main.left-collapsed  { grid-template-columns: 0 1fr 320px; }
+  main.right-collapsed { grid-template-columns: 280px 1fr 0; }
+  main.left-collapsed.right-collapsed { grid-template-columns: 0 1fr 0; }
+
+  aside {
+    border-right: 1px solid var(--line);
+    background: var(--surface);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    transition: padding 0.2s ease, border-color 0.2s ease;
+  }
+  aside.right-aside {
+    border-right: 0;
+    border-left: 1px solid var(--line);
+  }
+  main.left-collapsed  > aside.left-aside,
+  main.right-collapsed > aside.right-aside {
+    padding: 0;
+    border-color: transparent;
+    overflow: hidden;
+  }
+
+  /* ICON BUTTON (toggle sidebars) */
+  .icon-btn {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 7px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.12s;
+    font-family: inherit;
+  }
+  .icon-btn:hover { background: var(--bg); color: var(--text); border-color: var(--subtle); }
+  .icon-btn.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft-2); }
+  .icon-btn svg { width: 15px; height: 15px; }
+
+  .divider {
+    width: 1px;
+    height: 22px;
+    background: var(--line);
+    margin: 0 2px;
+  }
+
+  /* STATS PANEL TABLE */
+  .stats-card { padding: 0; overflow: hidden; }
+  .stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    table-layout: fixed;
+  }
+  .stats-table th,
+  .stats-table td {
+    text-align: right;
+    padding: 7px 5px;
+    border-bottom: 1px solid var(--line-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+  .stats-table th {
+    font-weight: 500;
+    color: var(--muted);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--bg);
+    font-family: 'Outfit', sans-serif;
+  }
+  .stats-table th:first-child,
+  .stats-table td:first-child {
+    text-align: left;
+    padding-left: 10px;
+    width: 50px;
+  }
+  .stats-table th:not(:first-child),
+  .stats-table td:not(:first-child) {
+    width: calc((100% - 50px) / 5);
+  }
+  .stats-table tr:last-child td { border-bottom: 0; }
+  .stats-table tr.dim td { opacity: 0.4; }
+  .stats-table td { color: var(--text); font-weight: 500; }
+  .stats-table .stats-ch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+  }
+  .stats-table .stats-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .stats-table td.s-empty { color: var(--subtle); }
+
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 0 4px;
+    margin-bottom: 6px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  .kv dt {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .kv dd {
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    word-break: break-all;
+  }
+
+  .kv dd.placeholder { color: var(--subtle); font-style: italic; }
+
+  /* MOUSE HINTS */
+  .hint-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .hint-row {
+    display: grid;
+    grid-template-columns: 86px 1fr;
+    align-items: start;
+    column-gap: 8px;
+  }
+
+  .hint-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-content: start;
+  }
+
+  .kbd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    line-height: 1.5;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .kbd.k-blue  { background: rgba(59, 130, 246, 0.10);  border-color: rgba(59, 130, 246, 0.30);  color: #2563eb; }
+  .kbd.k-green { background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.30); color: #059669; }
+  .kbd.k-orange{ background: rgba(245, 158, 11, 0.12);  border-color: rgba(245, 158, 11, 0.32); color: #b45309; }
+  .kbd.k-violet{ background: rgba(139, 92, 246, 0.10);  border-color: rgba(139, 92, 246, 0.28); color: #7c3aed; }
+
+  .hint-text {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+  }
+
+  .hint-sep {
+    height: 1px;
+    background: var(--line-soft);
+    margin: 9px -12px 0;
+  }
+
+  .hint-note {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--subtle);
+    margin-top: 7px;
+  }
+
+  /* CHART AREA */
+  .chart-area {
+    overflow-y: auto;
+    padding: 12px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: calc(100vh - 64px); /* viewport minus header */
+  }
+
+  .drop-zone {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    margin: 24px;
+    min-height: 400px;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+
+  .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .drop-zone-inner {
+    text-align: center;
+    max-width: 380px;
+  }
+
+  .drop-zone-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    margin: 0 auto 16px;
+  }
+
+  .drop-zone-icon svg { width: 22px; height: 22px; }
+
+  .drop-zone h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+
+  .drop-zone p {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+
+  /* ZOOM TOOLBAR */
+  .zoom-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .zoom-btn {
+    padding: 6px 11px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .zoom-btn:hover { background: var(--bg); border-color: var(--subtle); }
+
+  .zoom-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  /* Zoom toolbar when rendered inside the sidebar — wraps buttons to 2 rows
+     and places the time-readout on its own row beneath the buttons. */
+  .zoom-card {
+    padding: 8px 10px;
+  }
+  .zoom-bar.sidebar-zoom {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .zoom-bar.sidebar-zoom .zoom-btn {
+    flex: 1 1 calc(33% - 4px);
+    min-width: 0;
+    padding: 6px 4px;
+    text-align: center;
+    font-size: 11px;
+  }
+  .zoom-bar.sidebar-zoom .time-readout {
+    flex: 1 1 100%;
+    text-align: center;
+    margin-top: 4px;
+    background: var(--bg);
+  }
+
+  .zoom-spacer { flex: 1; }
+
+  /* CURSORS / MEASUREMENT */
+  .cursor-toggle {
+    width: 100%;
+    padding: 7px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .cursor-toggle:hover { background: var(--bg); border-color: var(--subtle); }
+  .cursor-toggle.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  .cursor-readout {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+  .cursor-readout .kv { margin-bottom: 8px; }
+  .cursor-readout .kv dt { color: var(--subtle); }
+
+  .cursor-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .cursor-table th, .cursor-table td {
+    text-align: right;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .cursor-table th:first-child, .cursor-table td:first-child { text-align: left; }
+  .cursor-table thead th {
+    color: var(--subtle);
+    font-weight: 500;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--line);
+  }
+  .cursor-table tbody tr:last-child td { border-bottom: 0; }
+  .cursor-table .cur-ch {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 500;
+  }
+  .cursor-table .cur-ch .swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .cursor-table .cur-dim { color: var(--muted); }
+  .cursor-table .cur-delta { color: var(--accent); font-weight: 500; }
+
+  .time-readout {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 10px;
+    background: var(--bg);
+    border-radius: 6px;
+  }
+
+  /* CHART CANVAS */
+  .chart-container {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 6px 10px;
+    box-shadow: var(--shadow);
+    flex: 1 1 0;
+    min-height: 50px;
+    overflow: hidden;
+  }
+
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    flex-shrink: 0;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.1s;
+    border: 1px solid transparent;
+    user-select: none;
+  }
+
+  .legend-item:hover { background: var(--bg); }
+
+  .legend-item.active {
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-2);
+  }
+
+  .legend-item .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    cursor: crosshair;
+  }
+  canvas.box-selecting { cursor: col-resize !important; }
+
+  /* STATUS BAR */
+  footer {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding: 6px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--subtle);
+    display: inline-block;
+    margin-right: 6px;
+  }
+
+  .status-dot.ok { background: #10b981; }
+  .status-dot.err { background: #ef4444; }
+  .status-dot.warn { background: #f59e0b; }
+
+  /* LOADING */
+  .loading {
+    position: fixed;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(4px);
+    display: grid;
+    place-items: center;
+    z-index: 100;
+  }
+
+  .loading-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 36px;
+    box-shadow: var(--shadow-md);
+    text-align: center;
+    min-width: 280px;
+  }
+
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    margin: 0 auto 14px;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text { font-weight: 500; margin-bottom: 4px; }
+  .loading-sub { color: var(--muted); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--line-soft);
+    border-radius: 2px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.15s;
+  }
+
+  /* TOAST */
+  .toast {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #1f1f23;
+    color: white;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.25s;
+    z-index: 200;
+    box-shadow: 0 8px 24px -4px rgba(0,0,0,0.18);
+  }
+
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.err { background: #dc2626; }
+  .toast.ok { background: #059669; }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--subtle); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* RESPONSIVE */
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 240px 1fr 300px; }
+  }
+  @media (max-width: 900px) {
+    main,
+    main.left-collapsed,
+    main.right-collapsed,
+    main.left-collapsed.right-collapsed { grid-template-columns: 1fr; }
+    aside.left-aside,
+    aside.right-aside { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3l3-9 4 18 3-9h4"/></svg>
+    </div>
+    RIGOL 波形查看器
+  </div>
+  <div class="header-actions">
+    <span class="file-name" id="fileName">未加载文件</span>
+    <div class="divider"></div>
+    <button class="zoom-btn" id="btnFullZoom" title="恢复完整波形显示" style="display:none">全波形</button>
+    <span class="time-readout" id="timeReadout" style="display:none">-</span>
+    <div class="divider"></div>
+    <button class="icon-btn" id="btnToggleLeft" title="显示 / 隐藏左侧面板">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+    <button class="icon-btn" id="btnToggleRight" title="显示 / 隐藏右侧统计面板">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+    </button>
+    <div class="divider"></div>
+    <button class="file-btn" id="btnOpen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      打开 .bin
+    </button>
+    <input type="file" id="fileInput" accept=".bin" class="sr-only">
+  </div>
+</header>
+
+<main>
+  <aside class="left-aside">
+    <div>
+      <div class="section-title">文件</div>
+      <div class="card">
+        <dl class="kv">
+          <dt>格式</dt><dd id="fmtFormat" class="placeholder">-</dd>
+          <dt>型号</dt><dd id="fmtModel" class="placeholder">-</dd>
+          <dt>序列号</dt><dd id="fmtSerial" class="placeholder">-</dd>
+          <dt>日期</dt><dd id="fmtDate" class="placeholder">-</dd>
+          <dt>大小</dt><dd id="fmtSize" class="placeholder">-</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">采集</div>
+      <div class="card">
+        <dl class="kv">
+          <dt>采样率</dt><dd id="acqRate" class="placeholder">-</dd>
+          <dt>采样间隔</dt><dd id="acqInterval" class="placeholder">-</dd>
+          <dt>通道数</dt><dd id="acqChannels" class="placeholder">-</dd>
+          <dt>每通道点数</dt><dd id="acqSamples" class="placeholder">-</dd>
+          <dt>总时长</dt><dd id="acqDuration" class="placeholder">-</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">
+        鼠标操作
+        <span style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--subtle);font-size:10px">快捷键</span>
+      </div>
+      <div class="card">
+        <div class="hint-list">
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd k-blue">左键拖拽</span></div>
+            <div class="hint-text">框选时间区间 → 设 T1/T2 光标</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd k-green">右键拖拽</span></div>
+            <div class="hint-text">框选矩形 → 放大到该区域</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd">Shift</span><span class="kbd">左键</span><span class="kbd">中键</span></div>
+            <div class="hint-text">拖拽平移波形（全通道同步）</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd">滚轮</span></div>
+            <div class="hint-text">以光标位置为中心缩放</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd k-orange">手柄拖拽</span></div>
+            <div class="hint-text">微调 T1 / T2 光标位置</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd k-violet">F</span></div>
+            <div class="hint-text">恢复完整波形显示</div>
+          </div>
+          <div class="hint-row">
+            <div class="hint-keys"><span class="kbd k-violet">C</span></div>
+            <div class="hint-text">启用 / 关闭 T1-T2 光标</div>
+          </div>
+        </div>
+        <div class="hint-sep"></div>
+        <div class="hint-note">
+          统计与测量基于当前可见窗口；时间轴为相对时间，可见窗口最左端为 0。
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="chart-area" id="chartArea">
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-zone-inner">
+        <div class="drop-zone-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+        </div>
+        <h2>将 RIGOL .bin 文件拖到此处</h2>
+        <p>或点击此处浏览文件选择。支持 DHO800、MSO5000、DS7000、MSO8000 等 RIGOL 示波器的 RG01 / RG02 / RG03 格式。</p>
+        <button class="file-btn" id="btnOpen2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+          选择文件
+        </button>
+      </div>
+    </div>
+
+    <div id="chartsContainer" style="display:none"></div>
+    <div class="chart-legend" id="chartLegend" style="display:none"></div>
+  </section>
+
+  <aside class="right-aside" id="statsAside">
+    <div>
+      <div class="section-title">
+        统计
+        <span style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--subtle);font-size:10px">可见窗口</span>
+      </div>
+      <div class="card stats-card">
+        <table class="stats-table" id="statsTable">
+          <thead>
+            <tr>
+              <th>通道</th>
+              <th>最小</th>
+              <th>最大</th>
+              <th>峰峰</th>
+              <th>均值</th>
+              <th>σ</th>
+            </tr>
+          </thead>
+          <tbody id="statsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">
+        测量
+        <span style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px;color:var(--subtle);font-size:10px">T1 / T2 光标</span>
+      </div>
+      <div class="card stats-card">
+        <button class="cursor-toggle" id="btnToggleCursors">启用光标</button>
+        <div class="cursor-readout" id="cursorReadout" style="display:none">
+          <dl class="kv">
+            <dt>T1</dt><dd id="curT1" class="cur-dim">-</dd>
+            <dt>T2</dt><dd id="curT2" class="cur-dim">-</dd>
+            <dt>ΔT</dt><dd id="curDt" class="cur-delta">-</dd>
+          </dl>
+          <table class="cursor-table">
+            <thead>
+              <tr><th>通道</th><th>@T1</th><th>@T2</th><th>ΔV</th></tr>
+            </thead>
+            <tbody id="cursorTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <span><span class="status-dot" id="statusDot"></span><span id="statusText">就绪</span></span>
+  <span id="footerInfo">尚未加载波形</span>
+</footer>
+
+<div class="loading" id="loadingOverlay" style="display:none">
+  <div class="loading-card">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingTitle">正在加载文件…</div>
+    <div class="loading-sub" id="loadingSub">正在读取字节数据</div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ============================================================
+// RIGOL BINARY PARSER
+// ============================================================
+
+const RIGOL_FORMATS = {
+  'RG01': { name: 'RG01', desc: 'DS1000Z / MSO5000 / DS7000' },
+  'RG03': { name: 'RG03', desc: 'DHO800 / DHO1000' },
+  'RG02': { name: 'RG02', desc: 'DS8000 / MSO8000' },
+};
+
+const DHO_TICK_S = 8e-10; // DHO800: 0.8 ns per tick (legacy, unused now)
+const FILE_HDR_SIZE = 128; // fixed file header size
+const CH_HDR_SIZE = 140;   // per-channel header size (from file header offset 0x10)
+
+function parseRigolBin(buffer) {
+  if (buffer.byteLength < 24) throw new Error('文件过小，无法解析');
+  const dv = new DataView(buffer);
+  const u8 = new Uint8Array(buffer);
+
+  // Read cookie (first 4 bytes)
+  const cookie = String.fromCharCode(u8[0], u8[1], u8[2], u8[3]);
+  const fmt = RIGOL_FORMATS[cookie];
+  if (!fmt) throw new Error('不是 RIGOL 二进制文件（文件标识：' + cookie + '）');
+
+  // File size and waveform count (little-endian uint32)
+  const declaredSize = dv.getUint32(4, true);
+  const nWaveforms = dv.getUint32(0x0C, true);
+
+  // Read header size & n_points (varies by format)
+  // hdrSize (0x10) = per-channel header size (140 for RG03)
+  const chHdrSize = dv.getUint32(0x10, true);
+  const nPoints = dv.getUint32(0x1C, true);
+
+  // Read x_increment as f64 from file header offset 0x30
+  // For DHO814 this is 3.2e-9 s (3.2 ns → 312.5 MSa/s)
+  let xIncrement = 0;
+  if (0x38 <= buffer.byteLength) {
+    const xv = dv.getFloat64(0x30, true);
+    if (xv > 1e-15 && xv < 1 && Number.isFinite(xv)) {
+      xIncrement = xv;
+    }
+  }
+  // Fallback: if x_increment not found in file header, try per-channel
+  // (old code path: u32 at CH1+36 × DHO_TICK_S)
+  if (xIncrement <= 0) {
+    xIncrement = 1.0; // safe default
+  }
+
+  // Try to read model & serial (search up to 256 bytes for ASCII strings)
+  let model = null, serial = null, date = null, time = null;
+  const headerBytes = u8.slice(0, Math.min(256, u8.length));
+  const headerStr = String.fromCharCode.apply(null, headerBytes);
+  const m = headerStr.match(/([A-Z]{2,5}\d{3,4}):([A-Z][A-Z0-9]+)/);
+  if (m) { model = m[1]; serial = m[2]; }
+  const dMatch = headerStr.match(/(\d{4}-\d+-\d+)/);
+  if (dMatch) date = dMatch[1];
+  const tMatch = headerStr.match(/(\d+:\d+:\d+)/);
+  if (tMatch) time = tMatch[1];
+
+  // File header is FILE_HDR_SIZE bytes; each channel block = chHdrSize + nPoints*4 data
+  const fileHdrSize = FILE_HDR_SIZE;
+  const perChHdr = chHdrSize || CH_HDR_SIZE;
+
+  // Determine channel data offsets: find "CH1\0" "CH2\0" "CH3\0" "CH4\0" strings
+  const channels = [];
+  const searchLimit = Math.min(buffer.byteLength, fileHdrSize + (perChHdr + nPoints * 4 + 256) * nWaveforms);
+
+  const findOffsets = [];
+  for (let i = fileHdrSize; i < searchLimit - 4; i++) {
+    if (u8[i] === 0x43 && u8[i+1] === 0x48 && u8[i+3] === 0x00 &&
+        u8[i+2] >= 0x31 && u8[i+2] <= 0x34) {
+      findOffsets.push({ ch: u8[i+2] - 0x31 + 1, headerStart: i });
+    }
+  }
+
+  // For each detected channel marker, data starts at headerStart + perChHdr
+  // and runs for exactly nPoints float32 samples.
+  for (let i = 0; i < findOffsets.length; i++) {
+    const { ch, headerStart } = findOffsets[i];
+    const dataStart = headerStart + perChHdr;
+    const dataEnd = dataStart + nPoints * 4;
+    // Guard against overrun for the last channel
+    const safeEnd = Math.min(dataEnd, buffer.byteLength);
+    const nAvail = Math.floor((safeEnd - dataStart) / 4);
+
+    const view = new Float32Array(buffer, dataStart, nAvail);
+    const clean = clipOutliers(view);
+
+    channels.push({
+      name: 'CH' + ch,
+      chNumber: ch,
+      samples: clean.values,
+      originalCount: clean.originalCount,
+      nOutliers: clean.nOutliers,
+      min: clean.min,
+      max: clean.max,
+      mean: clean.mean,
+      std: clean.std,
+      xIncrement: xIncrement,
+      sampleInterval: xIncrement,
+      enabled: true,
+    });
+  }
+
+  // Compute sample rate (use first channel's x_increment, or estimate from total)
+  if (channels.length === 0) throw new Error('未在文件中找到通道数据');
+
+  // Normalize all channels to the same sample count — each channel block in
+  // the binary is nominally the same length, but empirical trimming of
+  // boundary garbage can leave them a few samples apart. Cap everyone to
+  // the shortest so the time axis is in lockstep across all channels.
+  let minN = channels[0].samples.length;
+  for (const ch of channels) {
+    if (ch.samples.length < minN) minN = ch.samples.length;
+  }
+  for (const ch of channels) {
+    if (ch.samples.length > minN) {
+      ch.samples = ch.samples.slice(0, minN);
+    }
+  }
+
+  const sampleInterval = channels[0].sampleInterval > 0 ? channels[0].sampleInterval : 1.0;
+  const sampleRate = 1.0 / sampleInterval;
+  const nSamples = channels[0].samples.length;
+  const duration = nSamples * sampleInterval;
+
+  return {
+    format: fmt,
+    model, serial, date, time,
+    fileSize: buffer.byteLength,
+    declaredSize,
+    nWaveforms,
+    chHdrSize: perChHdr,
+    nPoints,
+    sampleInterval,
+    sampleRate,
+    nSamples,
+    duration,
+    channels,
+  };
+}
+
+function findDataStart(buffer, headerStart) {
+  // Search forward from headerStart for a 100-sample float32 window with low std + finite values
+  const u8 = new Uint8Array(buffer);
+  let bestOff = headerStart + 128;
+  let bestScore = -1;
+  for (let off = headerStart + 64; off < headerStart + 512; off += 4) {
+    if (off + 400 > buffer.byteLength) break;
+    const arr = new Float32Array(buffer, off, 100);
+    let finite = 0, ok = 0;
+    let sum = 0, sumSq = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (Number.isFinite(v) && Math.abs(v) < 1000) {
+        finite++;
+        sum += v;
+        sumSq += v * v;
+        if (Math.abs(v) < 100) ok++;
+      }
+    }
+    if (finite < 50) continue;
+    const mean = sum / finite;
+    const variance = sumSq / finite - mean * mean;
+    const std = Math.sqrt(Math.max(0, variance));
+    // Prefer: high count of finite values, low std (clean signal), mean near 0 or any
+    const score = ok * (std < 50 ? 2 : 1);
+    if (score > bestScore) {
+      bestScore = score;
+      bestOff = off;
+    }
+  }
+  return bestOff;
+}
+
+// Trim trailing garbage from a channel's data region. Header/footer bytes from
+// the next channel or file trailer get interpreted as float32 voltages and can
+// render as sharp end-of-trace spikes. ASCII header bytes often produce small
+// floats (e.g. 'C'=0x43 → ~70) that pass a simple "is in ±100V?" check, so we
+// also compare each tail window against bulk stats sampled from the channel's
+// first MB of clean data. If the tail's mean or range drifts far from bulk,
+// it's garbage.
+function trimEnd(buffer, startOff, endOff) {
+  const winSize = 100;
+  const winBytes = winSize * 4;
+  if (endOff - winBytes < startOff) return endOff;
+
+  // Sample bulk stats from data near the start (assumed clean by findDataStart).
+  const bulkEnd = Math.min(startOff + 1024 * 1024, endOff - winBytes);
+  const bulkArr = new Float32Array(buffer, startOff, (bulkEnd - startOff) / 4);
+  let bulkMin = Infinity, bulkMax = -Infinity, bulkSum = 0, bulkN = 0;
+  for (let i = 0; i < bulkArr.length; i++) {
+    const v = bulkArr[i];
+    if (Number.isFinite(v) && Math.abs(v) < 100) {
+      if (v < bulkMin) bulkMin = v;
+      if (v > bulkMax) bulkMax = v;
+      bulkSum += v;
+      bulkN++;
+    }
+  }
+  if (bulkN === 0) return endOff;        // no reference data; skip trim
+  const bulkMean = bulkSum / bulkN;
+  const bulkRange = Math.max(bulkMax - bulkMin, 0.5);
+
+  // Mark a 100-sample window as "looks like garbage" if any of:
+  //   - too many non-finite or |v|>100 samples
+  //   - mean far from bulk mean
+  //   - local range far exceeds bulk range (sharp tall spike at boundary)
+  function looksLikeGarbage(off) {
+    if (off < startOff || off + winBytes > buffer.byteLength) return true;
+    const arr = new Float32Array(buffer, off, winSize);
+    let bad = 0, finite = 0, sum = 0, mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (Number.isFinite(v) && Math.abs(v) < 100) {
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        sum += v;
+        finite++;
+      } else {
+        bad++;
+      }
+    }
+    if (bad > 5) return true;
+    if (finite < 80) return true;
+    const mean = sum / finite;
+    if (Math.abs(mean - bulkMean) > Math.max(5, bulkRange * 2)) return true;
+    const range = mx - mn;
+    if (range > bulkRange * 4 + 8) return true;
+    return false;
+  }
+
+  // Tail already consistent with bulk — no trim needed.
+  if (!looksLikeGarbage(endOff - winBytes)) return endOff;
+
+  // Walk backward to find the rightmost window that's consistent with bulk.
+  for (let off = endOff - winBytes; off >= startOff; off -= 4) {
+    if (!looksLikeGarbage(off)) return off + winBytes;
+  }
+  // Couldn't find any clean tail — keep at least one window from the start.
+  return startOff + winBytes;
+}
+
+function clipOutliers(arr) {
+  // Identify and set to NaN any value with magnitude > 100V (likely boundary garbage)
+  const out = new Float32Array(arr.length);
+  let nOut = 0;
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (Number.isFinite(v) && Math.abs(v) < 100) {
+      out[i] = v;
+      sum += v;
+      sumSq += v * v;
+    } else {
+      out[i] = NaN;
+      nOut++;
+    }
+  }
+  const nValid = arr.length - nOut;
+  if (nValid === 0) {
+    return { values: out, originalCount: 0, nOutliers: 0, min: 0, max: 0, mean: 0, std: 0 };
+  }
+  const mean = sum / nValid;
+  const variance = sumSq / nValid - mean * mean;
+  const std = Math.sqrt(Math.max(0, variance));
+
+  // Compute min/max (excluding NaN)
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < out.length; i++) {
+    if (!Number.isNaN(out[i])) {
+      if (out[i] < mn) mn = out[i];
+      if (out[i] > mx) mx = out[i];
+    }
+  }
+
+  return {
+    values: out,
+    originalCount: arr.length,
+    nOutliers: nOut,
+    min: mn,
+    max: mx,
+    mean,
+    std,
+  };
+}
+
+// ============================================================
+// LTTB (Largest Triangle Three Buckets) DOWNSAMPLING
+// ============================================================
+function lttb(data, threshold) {
+  // data: Float32Array; threshold: number of points to output
+  // Returns [Float32Array, Float32Array] of (x, y) pairs preserving visual shape
+  const n = data.length;
+  if (threshold >= n || threshold <= 2) {
+    const x = new Float32Array(n);
+    for (let i = 0; i < n; i++) x[i] = i;
+    return [x, data];
+  }
+
+  const x = new Float32Array(threshold);
+  const y = new Float32Array(threshold);
+
+  const bucketSize = (n - 2) / (threshold - 2);
+
+  let a = 0;
+  x[0] = 0;
+  y[0] = data[0];
+
+  for (let i = 0; i < threshold - 2; i++) {
+    // Calculate next bucket range
+    const rangeOffs = Math.floor((i + 1) * bucketSize) + 1;
+    const rangeTo = Math.floor((i + 2) * bucketSize) + 1;
+    // Calculate average for next bucket
+    let avgX = 0, avgY = 0;
+    let count = 0;
+    for (let j = rangeOffs; j < rangeTo && j < n; j++) {
+      if (Number.isFinite(data[j])) {
+        avgX += j;
+        avgY += data[j];
+        count++;
+      }
+    }
+    if (count === 0) {
+      avgX = (rangeOffs + rangeTo) / 2;
+      avgY = data[rangeOffs] || 0;
+    } else {
+      avgX /= count;
+      avgY /= count;
+    }
+
+    // Get the range for this bucket
+    const rangeStart = Math.floor(i * bucketSize) + 1;
+    const rangeEnd = Math.floor((i + 1) * bucketSize) + 1;
+
+    // Find point in current bucket with largest triangle area
+    let maxArea = -1;
+    let maxAreaIdx = rangeStart;
+    const pointAX = a, pointAY = y[i];
+    for (let j = rangeStart; j < rangeEnd && j < n; j++) {
+      if (!Number.isFinite(data[j])) continue;
+      const area = Math.abs(
+        (pointAX - avgX) * (data[j] - pointAY) -
+        (pointAX - j) * (avgY - pointAY)
+      ) * 0.5;
+      if (area > maxArea) {
+        maxArea = area;
+        maxAreaIdx = j;
+      }
+    }
+
+    x[i + 1] = maxAreaIdx;
+    y[i + 1] = data[maxAreaIdx];
+    a = maxAreaIdx;
+  }
+
+  x[threshold - 1] = n - 1;
+  y[threshold - 1] = data[n - 1];
+
+  return [x, y];
+}
+
+// ============================================================
+// WAVEFORM CHART
+// ============================================================
+class WaveformChart {
+  constructor(canvas, channel) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.channel = channel;
+    this.dpr = window.devicePixelRatio || 1;
+    this.zoom = { tStart: 0, tEnd: channel.samples.length };
+    // Rigol DHO oscilloscope channel colors (yellow / cyan / magenta / blue)
+    this.colors = ['#FFE600', '#00FFFF', '#FF00FF', '#0080FF', '#8b5cf6', '#10b981', '#ef4444', '#06b6d4'];
+    this.color = this.colors[(channel.chNumber - 1) % this.colors.length];
+
+    this._setupCanvas();
+    this._bindEvents();
+  }
+
+  _setupCanvas() {
+    // Use the PARENT container's height — canvas itself has no intrinsic height
+    const parent = this.canvas.parentElement;
+    const rect = parent.getBoundingClientRect();
+    const padY = 12; // padding 6px top + 6px bottom from .chart-container
+    const cssW = Math.max(1, rect.width - 20);  // padding 10px left+right
+    const cssH = Math.max(1, rect.height - padY);
+    this.canvas.width = cssW * this.dpr;
+    this.canvas.height = cssH * this.dpr;
+    this.canvas.style.width = cssW + 'px';
+    this.canvas.style.height = cssH + 'px';
+    this.width = cssW;
+    this.height = cssH;
+    // Reset transform then apply DPR scale (avoids cumulative scaling)
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  }
+
+  resize() {
+    this.draw();
+  }
+
+  _bindEvents() {
+    let isDragging = false;
+    let dragStart = null;
+    let dragZoomStart = null;
+    let dragMode = 'pan'; // 'pan' | 't1' | 't2' | 'box'
+    let boxStartIdx = 0; // sample index where box drag started
+    let boxEndIdx = 0;   // sample index where box drag currently is
+    // Live selection-box rectangle, drawn in screen-space during a drag.
+    // app.boxSelect is shared across all charts so they all show the same box.
+    if (!app.boxSelect) app.boxSelect = { active: false, startX: 0, endX: 0, startIdx: 0, endIdx: 0 };
+
+    const HANDLE_W = 11;
+    const HANDLE_H = 12;
+
+    this.canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      dragStart = { x: e.clientX, y: e.clientY };
+      dragMode = 'pan';
+
+      // Cursor-handle hit test: a small grab area at the top of the chart,
+      // active only when cursors are enabled.
+      if (app.cursors && app.cursors.enabled) {
+        const rect = this.canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        if (localY >= 0 && localY <= HANDLE_H + 4) {
+          const padL = 44, padR = 12;
+          const cw = this.width - padL - padR;
+          if (cw > 0) {
+            const span = this.zoom.tEnd - this.zoom.tStart;
+            if (span > 0) {
+              const t1X = padL + (app.cursors.t1Idx - this.zoom.tStart) / span * cw;
+              const t2X = padL + (app.cursors.t2Idx - this.zoom.tStart) / span * cw;
+              if (Math.abs(localX - t1X) <= HANDLE_W / 2 + 4) dragMode = 't1';
+              else if (Math.abs(localX - t2X) <= HANDLE_W / 2 + 4) dragMode = 't2';
+            }
+          }
+        }
+      }
+
+      // LEFT button = box-select (drag a region to set T1/T2)
+      // RIGHT button = zoom-box (drag a region to zoom into)
+      // MIDDLE button, or Shift+Left = pan (original behavior)
+      if (e.button === 0 && !e.shiftKey && dragMode === 'pan') {
+        dragMode = 'box';
+        const rect = this.canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const padL = 44, padR = 12;
+        const cw = this.width - padL - padR;
+        const frac = Math.max(0, Math.min(1, (localX - padL) / cw));
+        const i0 = Math.max(0, Math.floor(this.zoom.tStart));
+        const i1 = Math.min(this.channel.samples.length, Math.ceil(this.zoom.tEnd));
+        const idx = Math.round(i0 + frac * (i1 - i0));
+        boxStartIdx = idx;
+        boxEndIdx = idx;
+        app.boxSelect.active = true;
+        app.boxSelect.startIdx = idx;
+        app.boxSelect.endIdx = idx;
+        app.boxSelect.startX = localX;
+        app.boxSelect.endX = localX;
+        app.boxSelect.mode = 'measure'; // blue box → set T1/T2
+        document.body.style.cursor = 'col-resize';
+      } else if (e.button === 2 && dragMode === 'pan') {
+        dragMode = 'zoombox';
+        const rect = this.canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const padL = 44, padR = 12;
+        const cw = this.width - padL - padR;
+        const frac = Math.max(0, Math.min(1, (localX - padL) / cw));
+        const i0 = Math.max(0, Math.floor(this.zoom.tStart));
+        const i1 = Math.min(this.channel.samples.length, Math.ceil(this.zoom.tEnd));
+        const idx = Math.round(i0 + frac * (i1 - i0));
+        boxStartIdx = idx;
+        boxEndIdx = idx;
+        app.boxSelect.active = true;
+        app.boxSelect.startIdx = idx;
+        app.boxSelect.endIdx = idx;
+        app.boxSelect.startX = localX;
+        app.boxSelect.endX = localX;
+        app.boxSelect.mode = 'zoom'; // green box → zoom in
+        document.body.style.cursor = 'col-resize';
+      }
+
+      // Snapshot the GLOBAL zoom state, not just this channel's
+      if (app.waveform && app.waveform.channels[0] && app.waveform.channels[0]._chart) {
+        dragZoomStart = { ...app.waveform.channels[0]._chart.zoom };
+      } else {
+        dragZoomStart = { ...this.zoom };
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+
+      if (dragMode === 'box' || dragMode === 'zoombox') {
+        // Live box-drag: update the end position as the mouse moves
+        const rect = this.canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const padL = 44, padR = 12;
+        const cw = this.width - padL - padR;
+        const frac = Math.max(0, Math.min(1, (localX - padL) / cw));
+        const i0 = Math.max(0, Math.floor(this.zoom.tStart));
+        const i1 = Math.min(this.channel.samples.length, Math.ceil(this.zoom.tEnd));
+        boxEndIdx = Math.round(i0 + frac * (i1 - i0));
+        app.boxSelect.endIdx = boxEndIdx;
+        app.boxSelect.endX = localX;
+        // Redraw all charts to show the live box
+        if (app.waveform) {
+          for (const ch of app.waveform.channels) {
+            if (ch.enabled && ch._chart) ch._chart.draw();
+          }
+        }
+      } else if (dragMode === 'pan') {
+        const dx = e.clientX - dragStart.x;
+        const frac = -dx / this.width;
+        const span = dragZoomStart.tEnd - dragZoomStart.tStart;
+        const n = this.channel.samples.length;
+        const newStart = Math.max(0, Math.min(n - 1, dragZoomStart.tStart + frac * span));
+        const newEnd = Math.max(1, Math.min(n, dragZoomStart.tEnd + frac * span));
+        // Sync to ALL enabled channels
+        if (app.waveform) {
+          syncGlobalZoom(newStart, newEnd);
+        }
+      } else {
+        // Moving T1 or T2: convert mouse X to a sample index inside the
+        // currently visible window so the cursor lands where the user clicked.
+        const rect = this.canvas.getBoundingClientRect();
+        const localX = e.clientX - rect.left;
+        const padL = 44, padR = 12;
+        const cw = this.width - padL - padR;
+        const frac = Math.max(0, Math.min(1, (localX - padL) / cw));
+        const i0 = Math.max(0, Math.floor(this.zoom.tStart));
+        const i1 = Math.min(this.channel.samples.length, Math.ceil(this.zoom.tEnd));
+        const newIdx = Math.round(i0 + frac * (i1 - i0));
+        if (dragMode === 't1') app.cursors.t1Idx = newIdx;
+        else if (dragMode === 't2') app.cursors.t2Idx = newIdx;
+        // Cursors are GLOBAL across channels, so redraw every chart and
+        // refresh the sidebar readout.
+        if (app.waveform) {
+          for (const ch of app.waveform.channels) {
+            if (ch.enabled && ch._chart) ch._chart.draw();
+          }
+        }
+        updateCursorReadout();
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (dragMode === 'box') {
+        // Finalize the box-select: set T1/T2 to the selected range
+        app.boxSelect.active = false;
+        document.body.style.cursor = '';
+        const idx1 = Math.min(boxStartIdx, boxEndIdx);
+        const idx2 = Math.max(boxStartIdx, boxEndIdx);
+        // Only accept if the user dragged more than a few samples
+        if (idx2 - idx1 > 2) {
+          // Enable cursors if not already, then position them
+          if (!app.cursors.enabled) {
+            app.cursors.enabled = true;
+            const btn = $('btnToggleCursors');
+            if (btn) {
+              btn.classList.add('active');
+              btn.textContent = '关闭光标';
+            }
+            const cr = $('cursorReadout');
+            if (cr) cr.style.display = 'block';
+          }
+          app.cursors.t1Idx = idx1;
+          app.cursors.t2Idx = idx2;
+          updateCursorReadout();
+          // Redraw all charts to show the new T1/T2 lines
+          if (app.waveform) {
+            for (const ch of app.waveform.channels) {
+              if (ch.enabled && ch._chart) ch._chart.draw();
+            }
+          }
+        } else {
+          // Tiny drag — just redraw to clear the box
+          if (app.waveform) {
+            for (const ch of app.waveform.channels) {
+              if (ch.enabled && ch._chart) ch._chart.draw();
+            }
+          }
+        }
+      } else if (dragMode === 'zoombox') {
+        // Finalize the zoom-box: zoom into the selected region
+        app.boxSelect.active = false;
+        document.body.style.cursor = '';
+        const idx1 = Math.min(boxStartIdx, boxEndIdx);
+        const idx2 = Math.max(boxStartIdx, boxEndIdx);
+        if (idx2 - idx1 > 2 && app.waveform) {
+          // Apply the selected region as the new zoom window for all channels
+          syncGlobalZoom(idx1, idx2);
+          // Deactivate the Full button since we're no longer at full zoom
+          const fb = $('btnFullZoom');
+          if (fb) fb.classList.remove('active');
+        } else {
+          // Tiny drag — just redraw to clear the box
+          if (app.waveform) {
+            for (const ch of app.waveform.channels) {
+              if (ch.enabled && ch._chart) ch._chart.draw();
+            }
+          }
+        }
+      }
+      isDragging = false;
+      dragMode = 'pan';
+    });
+
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      // Zoom around the center of the current GLOBAL view (sync all channels)
+      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      const z = (app.waveform && app.waveform.channels[0] && app.waveform.channels[0]._chart)
+        ? app.waveform.channels[0]._chart.zoom
+        : this.zoom;
+      const center = (z.tStart + z.tEnd) / 2;
+      const halfSpan = (z.tEnd - z.tStart) / 2 * factor;
+      const n = this.channel.samples.length;
+      let newStart = Math.max(0, center - halfSpan);
+      let newEnd = Math.min(n, center + halfSpan);
+      // Edge clamp: keep span if hitting boundaries
+      if (newStart === 0) newEnd = Math.min(n, 2 * halfSpan);
+      else if (newEnd === n) newStart = Math.max(0, n - 2 * halfSpan);
+      if (app.waveform) syncGlobalZoom(newStart, newEnd);
+    }, { passive: false });
+
+    // Prevent the context menu from appearing when right-clicking the canvas
+    // to drag-pan (right-button pan is the alternative to left-button box-select)
+    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  setZoom(tStart, tEnd) {
+    this.zoom.tStart = tStart;
+    this.zoom.tEnd = tEnd;
+    this.draw();
+  }
+
+  // Zoom while keeping the LEFT EDGE (tStart) fixed - useful for "look forward"
+  setZoomKeepStart(newEnd) {
+    const newSpan = newEnd - this.zoom.tStart;
+    if (newSpan < 10) return;
+    this.zoom.tEnd = Math.min(this.channel.samples.length, newEnd);
+    this.draw();
+  }
+
+  // Zoom around the center of the current view
+  zoomAroundCenter(factor) {
+    const center = (this.zoom.tStart + this.zoom.tEnd) / 2;
+    const halfSpan = (this.zoom.tEnd - this.zoom.tStart) / 2 * factor;
+    let newStart = Math.max(0, center - halfSpan);
+    let newEnd = Math.min(this.channel.samples.length, center + halfSpan);
+    // Edge-clamp: keep span the same if hitting the edge
+    if (newStart === 0) {
+      newEnd = Math.min(this.channel.samples.length, 2 * halfSpan);
+    } else if (newEnd === this.channel.samples.length) {
+      newStart = Math.max(0, newEnd - 2 * halfSpan);
+    }
+    this.zoom.tStart = newStart;
+    this.zoom.tEnd = newEnd;
+    this.draw();
+  }
+
+  setFullZoom() {
+    this.zoom = { tStart: 0, tEnd: this.channel.samples.length };
+    this.draw();
+  }
+
+  draw() {
+    // Re-measure canvas in case flex layout changed its size
+    this._setupCanvas();
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const ch = this.channel;
+    const samples = ch.samples;
+    const n = samples.length;
+
+    const i0 = Math.max(0, Math.floor(this.zoom.tStart));
+    const i1 = Math.min(n, Math.ceil(this.zoom.tEnd));
+    if (i1 <= i0) return;
+
+    const sliceLen = i1 - i0;
+    const targetPoints = Math.min(sliceLen, Math.max(200, Math.floor(w * 1.5)));
+
+    // Extract slice
+    const slice = new Float32Array(sliceLen);
+    for (let i = 0; i < sliceLen; i++) slice[i] = samples[i0 + i];
+
+    // Downsample using LTTB
+    const [xs, ys] = lttb(slice, targetPoints);
+
+    // Find y range (excluding NaN)
+    let yMin = Infinity, yMax = -Infinity;
+    for (let i = 0; i < ys.length; i++) {
+      if (Number.isFinite(ys[i])) {
+        if (ys[i] < yMin) yMin = ys[i];
+        if (ys[i] > yMax) yMax = ys[i];
+      }
+    }
+    if (!Number.isFinite(yMin)) return;
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+
+    // Padding for y range
+    const yPad = (yMax - yMin) * 0.08;
+    yMin -= yPad;
+    yMax += yPad;
+
+    // Layout: leave room for y-axis voltage labels on the left
+    // Only the last visible channel needs bottom padding for x-axis time labels
+    const isLastVisible = (() => {
+      if (!app.waveform) return true;
+      const chs = app.waveform.channels;
+      for (let k = chs.length - 1; k >= 0; k--) {
+        if (chs[k].enabled) return chs[k].chNumber === ch.chNumber;
+      }
+      return true;
+    })();
+    const padL = 44, padR = 12, padT = 8;
+    const padB = isLastVisible ? 18 : 6;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    // Background grid (horizontal 5 lines)
+    ctx.strokeStyle = '#f1f1f4';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (plotH * i / 4);
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + plotW, y);
+    }
+    // Vertical grid (10 lines)
+    for (let i = 0; i <= 10; i++) {
+      const x = padL + (plotW * i / 10);
+      ctx.moveTo(x, padT);
+      ctx.lineTo(x, padT + plotH);
+    }
+    ctx.stroke();
+
+    // Y-axis voltage/current scale labels (top=max, middle=mid, bottom=min)
+    ctx.fillStyle = '#a1a1aa';
+    ctx.font = '10px JetBrains Mono, monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(yMax.toFixed(3), padL - 4, padT + 2);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(((yMin + yMax) / 2).toFixed(3), padL - 4, padT + plotH / 2);
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(yMin.toFixed(3), padL - 4, padT + plotH - 2);
+
+    // X-axis time labels: only on the last visible channel (bottom chart)
+    // 5 ticks matching vertical grid lines, dynamically reflects current zoom window
+    if (isLastVisible) {
+      // Relative time: 0 at the left edge of the visible window.
+      const tSpan = (i1 - i0) * ch.sampleInterval;
+      // One formatter for all five ticks: unit and decimals both track the zoom
+      // level, so deep zoom prints e.g. "0.00025 ms" instead of five identical
+      // "0.00 ms" labels.
+      const fmtT = makeTimeFormatter(tSpan, tSpan / 4, 0);
+      ctx.textBaseline = 'top';
+      for (let i = 0; i <= 4; i++) {
+        const t = tSpan * i / 4;
+        const x = padL + (plotW * i / 4);
+        ctx.textAlign = i === 0 ? 'left' : (i === 4 ? 'right' : 'center');
+        ctx.fillText(fmtT(t), x, padT + plotH + 4);
+      }
+    }
+
+    // Plot waveform
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+
+    const xScale = plotW / sliceLen;
+    const yScale = plotH / (yMax - yMin);
+
+    let started = false;
+    let lastValidX = null;
+    for (let i = 0; i < xs.length; i++) {
+      const xIdx = xs[i];
+      const yVal = ys[i];
+      if (!Number.isFinite(yVal)) {
+        // Gap in data - lift pen
+        started = false;
+        continue;
+      }
+      const px = padL + xIdx * xScale;
+      const py = padT + (yMax - yVal) * yScale;
+
+      if (!started) {
+        ctx.moveTo(px, py);
+        started = true;
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.stroke();
+
+    // Zero line if in range
+    if (yMin < 0 && yMax > 0) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      const y0 = padT + (yMax - 0) * yScale;
+      ctx.moveTo(padL, y0);
+      ctx.lineTo(padL + plotW, y0);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // CURSOR OVERLAY (T1, T2) - drawn on every channel so the user can read
+    // voltage values where each cursor crosses the waveform.
+    if (app.cursors && app.cursors.enabled) {
+      drawCursorOverlay(ctx, this.channel, i0, i1, padL, padT, plotW, plotH, yMin, yMax);
+    }
+
+    // LIVE BOX: while the user is dragging on the waveform to select a time
+    // region, draw a semi-transparent rectangle on every chart. Blue = measure
+    // (left-click), Green = zoom (right-click).
+    if (app.boxSelect && app.boxSelect.active) {
+      const span = i1 - i0;
+      if (span > 0) {
+        const xScale = plotW / span;
+        const x1 = padL + (Math.min(app.boxSelect.startIdx, app.boxSelect.endIdx) - i0) * xScale;
+        const x2 = padL + (Math.max(app.boxSelect.startIdx, app.boxSelect.endIdx) - i0) * xScale;
+        // Clamp to plot area
+        const cx1 = Math.max(padL, x1);
+        const cx2 = Math.min(padL + plotW, x2);
+        if (cx2 > cx1) {
+          const isZoom = app.boxSelect.mode === 'zoom';
+          const fillColor = isZoom ? 'rgba(34, 197, 94, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+          const strokeColor = isZoom ? '#22c55e' : '#3b82f6';
+          ctx.fillStyle = fillColor;
+          ctx.fillRect(cx1, padT, cx2 - cx1, plotH);
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 2]);
+          ctx.beginPath();
+          ctx.moveTo(cx1, padT);
+          ctx.lineTo(cx1, padT + plotH);
+          ctx.moveTo(cx2, padT);
+          ctx.lineTo(cx2, padT + plotH);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
+    // Update chart-level stats display - computed from VISIBLE window only
+    // Stats are pushed to the right-side stats panel (updateStatsPanel writes
+    // min/max/p-p/mean/σ for this channel into its dedicated table row).
+    updateStatsPanel(this.channel, i0, i1);
+
+    // Refresh the sidebar measurement readouts (T1/T2/ΔT + per-channel
+    // V@T1/V@T2/ΔV). Called from every draw so the values stay in sync with
+    // whatever the user has dragged the cursors to. Cheap: O(channels).
+    if (app.cursors && app.cursors.enabled) updateCursorReadout();
+  }
+}
+
+// Render T1/T2 vertical lines + draggable handles on top of the waveform.
+// Cursors are stored as sample indices in app.cursors, so they stay anchored
+// to the same data point regardless of zoom.
+function drawCursorOverlay(ctx, channel, i0, i1, padL, padT, plotW, plotH, yMin, yMax) {
+  const span = i1 - i0;
+  if (span <= 0) return;
+  const xScale = plotW / span;
+  const yScale = plotH / (yMax - yMin);
+  const samples = channel.samples;
+
+  function renderCursor(idx, label, color) {
+    const offset = idx - i0;
+    if (offset < 0 || offset > span) return; // outside visible window
+    const x = padL + offset * xScale;
+
+    // Vertical dashed line spanning full plot height
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, padT);
+    ctx.lineTo(x, padT + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draggable handle at the top: a small filled triangle pointing down
+    const handleW = 11;
+    const handleH = 12;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x - handleW / 2, padT);
+    ctx.lineTo(x + handleW / 2, padT);
+    ctx.lineTo(x, padT + handleH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Label inside the handle
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '600 9px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x, padT + handleH / 2);
+
+    // Voltage value at cursor position (sample nearest to cursor)
+    if (offset >= 0 && offset < samples.length) {
+      const samplePos = i0 + Math.round(offset);
+      if (samplePos >= 0 && samplePos < samples.length) {
+        const v = samples[samplePos];
+        if (Number.isFinite(v)) {
+          const y = padT + (yMax - v) * yScale;
+          // Marker dot on the waveform
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          // Voltage readout pill near the marker
+          const txt = (v >= 0 ? '+' : '') + v.toFixed(3);
+          ctx.font = '10px JetBrains Mono, monospace';
+          const txtW = ctx.measureText(txt).width;
+          const pillW = txtW + 8;
+          const pillH = 14;
+          // Place pill above the marker if there's room, otherwise below
+          let pillY = y - pillH - 6;
+          if (pillY < padT) pillY = y + 6;
+          let pillX = x - pillW / 2;
+          // Clamp inside plot
+          if (pillX < padL) pillX = padL;
+          if (pillX + pillW > padL + plotW) pillX = padL + plotW - pillW;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.rect(pillX, pillY, pillW, pillH);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(txt, pillX + pillW / 2, pillY + pillH / 2);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  renderCursor(app.cursors.t1Idx, 'T1', '#3b82f6'); // blue accent
+  renderCursor(app.cursors.t2Idx, 'T2', '#f59e0b'); // amber
+}
+
+// Push the visible-window stats for one channel into the right-side table
+function updateStatsPanel(ch, i0, i1) {
+  const row = document.querySelector(`#statsTbody tr[data-ch="${ch.chNumber}"]`);
+  if (!row) return;
+  const samples = ch.samples;
+  let sum = 0, sumSq = 0, n = 0, mn = Infinity, mx = -Infinity;
+  for (let i = i0; i < i1; i++) {
+    const v = samples[i];
+    if (Number.isFinite(v)) {
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+      sum += v;
+      sumSq += v * v;
+      n++;
+    }
+  }
+  const minEl  = row.querySelector('.s-min');
+  const maxEl  = row.querySelector('.s-max');
+  const p2pEl  = row.querySelector('.s-p2p');
+  const meanEl = row.querySelector('.s-mean');
+  const stdEl  = row.querySelector('.s-std');
+  if (n > 0) {
+    const mean = sum / n;
+    const std  = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+    const p2p  = mx - mn;
+    minEl.textContent  = mn.toFixed(4);
+    maxEl.textContent  = mx.toFixed(4);
+    p2pEl.textContent  = p2p.toFixed(4);
+    meanEl.textContent = mean.toFixed(4);
+    stdEl.textContent  = std.toFixed(4);
+    minEl.classList.remove('s-empty');
+    maxEl.classList.remove('s-empty');
+    p2pEl.classList.remove('s-empty');
+    meanEl.classList.remove('s-empty');
+    stdEl.classList.remove('s-empty');
+  } else {
+    minEl.textContent  = '-';
+    maxEl.textContent  = '-';
+    p2pEl.textContent  = '-';
+    meanEl.textContent = '-';
+    stdEl.textContent  = '-';
+    [minEl, maxEl, p2pEl, meanEl, stdEl].forEach(el => el.classList.add('s-empty'));
+  }
+}
+
+function formatTime(t) {
+  // Always renders an explicit unit. The time axis is absolute (offset from the
+  // start of the whole capture), so the leftmost tick is the record origin "0 s"
+  // — a neutral unit, rather than "0 ns" which would falsely imply ns resolution.
+  if (t === 0) return '0 s';
+  if (t < 1e-6) return (t * 1e9).toFixed(0) + ' ns';
+  if (t < 1e-3) return (t * 1e6).toFixed(2) + ' µs';
+  if (t < 1) return (t * 1e3).toFixed(2) + ' ms';
+  if (t < 60) return t.toFixed(2) + ' s';
+  return (t / 60).toFixed(2) + ' min';
+}
+
+// Adaptive time formatter, used for everything derived from the current view
+// (axis ticks, the header range, T1/T2 cursors). The number of decimals comes
+// from `stepSec` — the smallest increment that must stay distinguishable — so
+// zooming in reveals finer detail instead of repeating one rounded value.
+// A single unit is picked from |refSec| and reused for every value, so one axis
+// never mixes "ms" and "µs" ticks.
+function makeTimeFormatter(refSec, stepSec, minDecimals) {
+  const a = Math.abs(refSec);
+  let div, suffix;
+  if (a < 1e-6)      { div = 1e-9; suffix = ' ns'; }
+  else if (a < 1e-3) { div = 1e-6; suffix = ' µs'; }
+  else if (a < 1)    { div = 1e-3; suffix = ' ms'; }
+  else if (a < 60)   { div = 1;    suffix = ' s';  }
+  else               { div = 60;   suffix = ' min'; }
+
+  // Pick d so that one unit in the last printed place is at most half of
+  // `stepSec` (in the chosen unit) — guarantees neighbouring ticks differ.
+  let d = 0;
+  const stepInUnit = stepSec / div;
+  if (stepInUnit > 0 && stepInUnit < 2) {
+    d = Math.ceil(-Math.log10(stepInUnit / 2));
+  }
+  d = Math.max(minDecimals || 0, Math.min(6, d));
+  return function (v) {
+    // Time measured from a window/record origin is never negative; clamp the
+    // tiny negative values that floating-point drift can produce at the left
+    // edge so the axis never prints "-0.00 ms".
+    if (!(v > 0)) return '0' + suffix;
+    return (v / div).toFixed(d) + suffix;
+  };
+}
+
+// ============================================================
+// UI / APP
+// ============================================================
+let app = {
+  waveform: null,
+  charts: [],
+  globalZoom: { tStart: null, tEnd: null },
+  // T1/T2 measurement cursors, stored as SAMPLE INDICES so they stay anchored
+  // to a specific data point regardless of zoom. Indices are clamped to
+  // [0, nSamples-1] every time the waveform changes.
+  cursors: { enabled: false, t1Idx: 0, t2Idx: 0 },
+};
+
+const $ = (id) => document.getElementById(id);
+
+function setStatus(text, kind = '') {
+  $('statusText').textContent = text;
+  const dot = $('statusDot');
+  dot.className = 'status-dot ' + kind;
+}
+
+function showToast(text, kind = '') {
+  const t = $('toast');
+  t.textContent = text;
+  t.className = 'toast show ' + kind;
+  setTimeout(() => t.className = 'toast ' + kind, 2400);
+}
+
+function showLoading(title, sub) {
+  $('loadingTitle').textContent = title;
+  $('loadingSub').textContent = sub || '';
+  $('progressFill').style.width = '0%';
+  $('loadingOverlay').style.display = 'grid';
+}
+
+function setProgress(p) {
+  $('progressFill').style.width = Math.round(p * 100) + '%';
+}
+
+function hideLoading() {
+  $('loadingOverlay').style.display = 'none';
+}
+
+async function loadFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.bin')) {
+    showToast('请选择 .bin 文件', 'err');
+    return;
+  }
+
+  showLoading('正在读取文件…', file.name);
+  setStatus('读取中', 'warn');
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    setProgress(0.3);
+    await new Promise(r => setTimeout(r, 30));
+
+    showLoading('正在解析二进制数据…', '识别文件格式');
+    setStatus('解析中', 'warn');
+    const waveform = parseRigolBin(arrayBuffer);
+    setProgress(0.7);
+
+    showLoading('正在绘制波形…', `${waveform.channels.length} 个通道`);
+    app.waveform = waveform;
+    app.charts = [];
+    $('chartsContainer').innerHTML = '';
+
+    // Reset measurement cursors to 25% / 75% of the visible window so the
+    // user has a sensible starting pair right after loading.
+    initCursorsForNewWaveform();
+
+    for (const ch of waveform.channels) {
+      const container = document.createElement('div');
+      container.className = 'chart-container';
+
+      const canvas = document.createElement('canvas');
+      canvas.style.width = '100%';
+      canvas.style.display = 'block';
+      container.appendChild(canvas);
+
+      $('chartsContainer').appendChild(container);
+
+      // Defer chart creation to next frame so layout is finalized
+      const chart = new WaveformChart(canvas, ch);
+      requestAnimationFrame(() => {
+        chart.resize();
+      });
+      app.charts.push(chart);
+      ch._chart = chart;
+    }
+
+    // Build the consolidated legend below all charts
+    const legend = $('chartLegend');
+    legend.innerHTML = '';
+    for (const ch of waveform.channels) {
+      const item = document.createElement('div');
+      item.className = 'legend-item active';
+      item.innerHTML = `
+        <span class="swatch" style="background:${getChColor(ch.chNumber)}"></span>
+        <span>${ch.name}</span>
+      `;
+      item.addEventListener('click', () => {
+        ch.enabled = !ch.enabled;
+        item.classList.toggle('active');
+        const container = ch._chart.canvas.parentElement;
+        container.style.display = ch.enabled ? 'block' : 'none';
+        const statsRow = document.querySelector(`#statsTbody tr[data-ch="${ch.chNumber}"]`);
+        if (statsRow) statsRow.classList.toggle('dim', !ch.enabled);
+      });
+      legend.appendChild(item);
+    }
+
+    $('dropZone').style.display = 'none';
+    $('chartsContainer').style.display = 'flex';
+    $('chartsContainer').style.flexDirection = 'column';
+    $('chartsContainer').style.gap = '8px';
+    $('chartsContainer').style.flex = '1 1 0';
+    $('chartsContainer').style.minHeight = '0';
+    $('chartLegend').style.display = 'flex';
+    $('chartLegend').style.flexShrink = '0';
+    $('btnFullZoom').style.display = 'inline-block';
+    $('timeReadout').style.display = 'inline-block';
+    $('fileName').textContent = file.name;
+
+    populateSidebar(waveform);
+    drawAllCharts();
+
+    // Initialize the time readout to show the full-duration range on load
+    $('timeReadout').textContent = '0 - ' + makeTimeFormatter(waveform.duration, waveform.duration, 2)(waveform.duration);
+
+    setProgress(1.0);
+    setStatus('已加载', 'ok');
+    showToast('已加载 ' + waveform.channels.length + ' 个通道', 'ok');
+    $('footerInfo').textContent =
+      waveform.channels.length + ' 个通道 · ' +
+      waveform.nSamples.toLocaleString() + ' 点/通道 · ' +
+      formatTime(waveform.duration);
+
+    setTimeout(hideLoading, 200);
+
+  } catch (err) {
+    console.error(err);
+    hideLoading();
+    setStatus('错误', 'err');
+    showToast(err.message || '文件加载失败', 'err');
+    $('footerInfo').textContent = '加载失败';
+  }
+}
+
+function getChColor(n) {
+  // Rigol DHO oscilloscope channel colors (yellow / cyan / magenta / blue)
+  const colors = ['#FFE600', '#00FFFF', '#FF00FF', '#0080FF', '#8b5cf6', '#10b981', '#ef4444', '#06b6d4'];
+  return colors[(n - 1) % colors.length];
+}
+
+function populateSidebar(wf) {
+  $('fmtFormat').textContent = wf.format.name + ' (' + wf.format.desc + ')';
+  $('fmtFormat').classList.remove('placeholder');
+  $('fmtModel').textContent = wf.model || '-';
+  $('fmtModel').classList.remove('placeholder');
+  $('fmtSerial').textContent = wf.serial || '-';
+  $('fmtSerial').classList.remove('placeholder');
+  $('fmtDate').textContent = (wf.date || '-') + (wf.time ? ' ' + wf.time : '');
+  $('fmtDate').classList.remove('placeholder');
+  $('fmtSize').textContent = formatBytes(wf.fileSize);
+  $('fmtSize').classList.remove('placeholder');
+
+  $('acqRate').textContent = formatNumber(wf.sampleRate) + ' Sa/s';
+  $('acqRate').classList.remove('placeholder');
+  $('acqInterval').textContent = formatTime(wf.sampleInterval);
+  $('acqInterval').classList.remove('placeholder');
+  $('acqChannels').textContent = wf.channels.length + ' / ' + wf.nWaveforms;
+  $('acqChannels').classList.remove('placeholder');
+  $('acqSamples').textContent = wf.nSamples.toLocaleString();
+  $('acqSamples').classList.remove('placeholder');
+  $('acqDuration').textContent = formatTime(wf.duration);
+  $('acqDuration').classList.remove('placeholder');
+
+  // Build the right-side stats table: one row per channel
+  const tbody = $('statsTbody');
+  tbody.innerHTML = '';
+  for (const ch of wf.channels) {
+    const tr = document.createElement('tr');
+    tr.dataset.ch = ch.chNumber;
+    tr.innerHTML = `
+      <td><span class="stats-ch"><span class="stats-swatch" style="background:${getChColor(ch.chNumber)}"></span>${ch.name}</span></td>
+      <td class="s-min s-empty">-</td>
+      <td class="s-max s-empty">-</td>
+      <td class="s-p2p s-empty">-</td>
+      <td class="s-mean s-empty">-</td>
+      <td class="s-std s-empty">-</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Build the cursor measurement table: one row per channel
+  const ctbody = $('cursorTbody');
+  if (ctbody) {
+    ctbody.innerHTML = '';
+    for (const ch of wf.channels) {
+      const tr = document.createElement('tr');
+      tr.dataset.ch = ch.chNumber;
+      tr.innerHTML = `
+        <td><span class="cur-ch"><span class="swatch" style="background:${getChColor(ch.chNumber)}"></span>${ch.name}</span></td>
+        <td class="cur-v1 cur-dim">-</td>
+        <td class="cur-v2 cur-dim">-</td>
+        <td class="cur-dv cur-dim">-</td>
+      `;
+      ctbody.appendChild(tr);
+    }
+  }
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+// ============================================================
+// CURSORS (T1 / T2 measurement)
+// ============================================================
+
+// Place T1 at 25% and T2 at 75% of the currently visible (or full) window.
+// Called once after a waveform loads so the user has a sensible starting pair.
+function initCursorsForNewWaveform() {
+  if (!app.waveform || !app.waveform.channels.length) return;
+  const n = app.waveform.channels[0].samples.length;
+  // Default to a "comfortable" 25% / 75% of the full capture
+  app.cursors.t1Idx = Math.round(n * 0.25);
+  app.cursors.t2Idx = Math.round(n * 0.75);
+  // Keep T1 < T2 so delta is always positive
+  if (app.cursors.t1Idx > app.cursors.t2Idx) {
+    const tmp = app.cursors.t1Idx;
+    app.cursors.t1Idx = app.cursors.t2Idx;
+    app.cursors.t2Idx = tmp;
+  }
+}
+
+// Refresh the T1 / T2 / ΔT readouts and the per-channel V@T1, V@T2, ΔV rows.
+// Cheap (O(channels) constant work) so it can run on every chart redraw.
+function updateCursorReadout() {
+  if (!app.waveform || !app.cursors) return;
+  const wf = app.waveform;
+  const dt = wf.sampleInterval;
+  const t1 = app.cursors.t1Idx;
+  const t2 = app.cursors.t2Idx;
+  // Relative to the visible window's left edge — the same reference the X axis
+  // uses, so a cursor sitting on the "0.50 ms" tick reads back as 0.50 ms.
+  // Read the window off any enabled channel; they all share the same zoom.
+  const ref = (wf.channels.find(c => c.enabled && c._chart) || wf.channels[0])._chart;
+  const visStart = ref ? ref.zoom.tStart : 0;
+  const t1Sec = (t1 - visStart) * dt;
+  const t2Sec = (t2 - visStart) * dt;
+  const dtSec = (t2 - t1) * dt;
+
+  // Precision is tied to the SAMPLE INTERVAL rather than to the visible span,
+  // so a cursor reading keeps its full resolution at any zoom level.
+  const fmtCur = makeTimeFormatter(Math.max(t1Sec, t2Sec), dt, 0);
+  const fmtDt  = makeTimeFormatter(Math.abs(dtSec), dt, 0);
+
+  const t1El = $('curT1');
+  const t2El = $('curT2');
+  const dtEl = $('curDt');
+  if (t1El) {
+    t1El.textContent = fmtCur(t1Sec);
+    t1El.classList.toggle('cur-dim', false);
+  }
+  if (t2El) {
+    t2El.textContent = fmtCur(t2Sec);
+    t2El.classList.toggle('cur-dim', false);
+  }
+  if (dtEl) {
+    dtEl.textContent = fmtDt(Math.abs(dtSec));
+    dtEl.classList.toggle('cur-delta', true);
+  }
+
+  // Per-channel voltage values at the cursor positions
+  for (const ch of wf.channels) {
+    const row = document.querySelector(`#cursorTbody tr[data-ch="${ch.chNumber}"]`);
+    if (!row) continue;
+    const v1El = row.querySelector('.cur-v1');
+    const v2El = row.querySelector('.cur-v2');
+    const dvEl = row.querySelector('.cur-dv');
+    const samples = ch.samples;
+    const v1 = (t1 >= 0 && t1 < samples.length) ? samples[t1] : NaN;
+    const v2 = (t2 >= 0 && t2 < samples.length) ? samples[t2] : NaN;
+    if (Number.isFinite(v1)) {
+      v1El.textContent = (v1 >= 0 ? '+' : '') + v1.toFixed(4);
+      v1El.classList.remove('cur-dim');
+    } else {
+      v1El.textContent = '-';
+      v1El.classList.add('cur-dim');
+    }
+    if (Number.isFinite(v2)) {
+      v2El.textContent = (v2 >= 0 ? '+' : '') + v2.toFixed(4);
+      v2El.classList.remove('cur-dim');
+    } else {
+      v2El.textContent = '-';
+      v2El.classList.add('cur-dim');
+    }
+    if (Number.isFinite(v1) && Number.isFinite(v2)) {
+      const dv = v2 - v1;
+      dvEl.textContent = (dv >= 0 ? '+' : '') + dv.toFixed(4);
+      dvEl.classList.remove('cur-dim');
+      dvEl.classList.add('cur-delta');
+    } else {
+      dvEl.textContent = '-';
+      dvEl.classList.add('cur-dim');
+      dvEl.classList.remove('cur-delta');
+    }
+  }
+}
+
+function formatNumber(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(3) + ' G';
+  if (n >= 1e6) return (n / 1e6).toFixed(3) + ' M';
+  if (n >= 1e3) return (n / 1e3).toFixed(3) + ' k';
+  return n.toFixed(2);
+}
+
+function drawAllCharts() {
+  for (const ch of app.waveform.channels) {
+    if (ch.enabled && ch._chart) {
+      ch._chart.draw();
+    }
+  }
+}
+
+function setGlobalZoom(tStart, tEnd) {
+  for (const ch of app.waveform.channels) {
+    if (ch.enabled && ch._chart) {
+      ch._chart.setZoom(tStart, tEnd);
+    }
+  }
+  updateTimeReadout(tStart, tEnd);
+}
+
+function updateTimeReadout(tStart, tEnd) {
+  if (!app.waveform) return;
+  const dt = app.waveform.sampleInterval;
+  // Relative time: the left edge of the visible window is always 0, so the
+  // readout tracks the zoom level rather than the position in the record.
+  // Decimal count still follows the visible span — "0 - 16.00 ms" wide open,
+  // growing to "0 - 0.00500 ms" when zoomed deep.
+  const span = (tEnd - tStart) * dt;
+  $('timeReadout').textContent = '0 - ' + makeTimeFormatter(span, span, 2)(span);
+  // Clear active zoom button (custom position doesn't match any preset)
+  document.querySelectorAll('.zoom-btn').forEach(b => b.classList.remove('active'));
+}
+
+function syncGlobalZoom(newTStart, newTEnd) {
+  // Apply the same (tStart, tEnd) to ALL enabled channels and update readout
+  for (const ch of app.waveform.channels) {
+    if (ch.enabled && ch._chart) {
+      ch._chart.zoom.tStart = newTStart;
+      ch._chart.zoom.tEnd = newTEnd;
+      ch._chart.draw();
+    }
+  }
+  updateTimeReadout(newTStart, newTEnd);
+}
+
+function setFullZoom() {
+  for (const ch of app.waveform.channels) {
+    if (ch.enabled && ch._chart) {
+      ch._chart.setFullZoom();
+    }
+  }
+}
+
+// FULL ZOOM BUTTON (top header)
+$('btnFullZoom').addEventListener('click', () => {
+  const wf = app.waveform;
+  if (!wf) return;
+  setFullZoom();
+  $('timeReadout').textContent = '0 - ' + makeTimeFormatter(wf.duration, wf.duration, 2)(wf.duration);
+  $('btnFullZoom').classList.add('active');
+});
+
+// CURSORS (T1 / T2 measurement) toggle. When enabled, the cursor overlay is
+// drawn on every chart and the sidebar measurement card becomes visible.
+$('btnToggleCursors').addEventListener('click', () => {
+  app.cursors.enabled = !app.cursors.enabled;
+  const btn = $('btnToggleCursors');
+  btn.classList.toggle('active', app.cursors.enabled);
+  btn.textContent = app.cursors.enabled ? '关闭光标' : '启用光标';
+  $('cursorReadout').style.display = app.cursors.enabled ? 'block' : 'none';
+  if (app.cursors.enabled && app.waveform) {
+    // Reset to fresh 25% / 75% whenever the user re-enables, so toggling
+    // never leaves a stale pair from a previous session
+    initCursorsForNewWaveform();
+    updateCursorReadout();
+    // Force every chart to redraw so the cursor overlay appears
+    for (const ch of app.waveform.channels) {
+      if (ch.enabled && ch._chart) ch._chart.draw();
+    }
+  } else {
+    // Hide overlay: redraw without cursors
+    if (app.waveform) {
+      for (const ch of app.waveform.channels) {
+        if (ch.enabled && ch._chart) ch._chart.draw();
+      }
+    }
+  }
+});
+
+// FILE INPUT
+$('btnOpen').addEventListener('click', () => $('fileInput').click());
+$('btnOpen2').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+// DRAG & DROP
+const dropZone = $('dropZone');
+const chartArea = $('chartArea');
+
+['dragenter', 'dragover'].forEach(evt => {
+  document.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  document.addEventListener(evt, (e) => {
+    if (e.target === document || e.target === dropZone || e.target === document.body) {
+      dropZone.classList.remove('drag-over');
+    }
+  });
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// RESIZE
+window.addEventListener('resize', () => {
+  if (app.charts) {
+    for (const ch of app.charts) ch.resize();
+  }
+});
+
+// SIDEBAR TOGGLES — collapse/expand left and right panels via header buttons
+function resizeChartsSoon() {
+  // Allow CSS transition to finish before re-measuring canvases
+  setTimeout(() => {
+    if (app.charts) for (const ch of app.charts) ch.resize();
+  }, 220);
+}
+
+$('btnToggleLeft').addEventListener('click', () => {
+  document.querySelector('main').classList.toggle('left-collapsed');
+  $('btnToggleLeft').classList.toggle('active');
+  resizeChartsSoon();
+});
+
+$('btnToggleRight').addEventListener('click', () => {
+  document.querySelector('main').classList.toggle('right-collapsed');
+  $('btnToggleRight').classList.toggle('active');
+  resizeChartsSoon();
+});
+
+// KEYBOARD SHORTCUTS
+// 左侧面板「鼠标操作 / 快捷键」里列出的快捷键在这里落地。
+// 输入类元素获得焦点时忽略，避免和用户打字冲突。
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+
+  const k = e.key.toLowerCase();
+  if (k === 'f') {           // 恢复完整波形显示
+    e.preventDefault();
+    $('btnFullZoom').click();
+  } else if (k === 'c') {    // 开关 T1/T2 光标
+    e.preventDefault();
+    $('btnToggleCursors').click();
+  }
+});
+
+// Initial status
+setStatus('就绪');
+</script>
+
+</body>
+</html>

@@ -1,0 +1,18 @@
+# 依赖 / 构建产物
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# 生成的示例波形文件（用 node tools/make-sample-bin.js 重新生成）
+sample/*.bin
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 本地截图草稿
+docs/_wip-*.png

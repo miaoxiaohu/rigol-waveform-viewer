@@ -1,0 +1,6 @@
+# 仓库里统一存 LF，避免 Windows 上的 CRLF 污染 diff 和 shell 脚本
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.bin binary
