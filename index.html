@@ -30,20 +30,6 @@
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* 视觉上隐藏，但保留在无障碍树 / 键盘焦点顺序里。
-     原先用的 hidden 属性会把 input 整个移出可交互树，键盘用户和自动化工具都够不着。 */
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   html, body {
     height: 100%;
     font-family: 'Outfit', sans-serif;
@@ -734,7 +720,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       打开 .bin
     </button>
-    <input type="file" id="fileInput" accept=".bin" class="sr-only">
+    <input type="file" id="fileInput" accept=".bin" hidden>
   </div>
 </header>
 
@@ -794,12 +780,8 @@
             <div class="hint-text">微调 T1 / T2 光标位置</div>
           </div>
           <div class="hint-row">
-            <div class="hint-keys"><span class="kbd k-violet">F</span></div>
+            <div class="hint-keys"><span class="kbd k-violet">全波形</span></div>
             <div class="hint-text">恢复完整波形显示</div>
-          </div>
-          <div class="hint-row">
-            <div class="hint-keys"><span class="kbd k-violet">C</span></div>
-            <div class="hint-text">启用 / 关闭 T1-T2 光标</div>
           </div>
         </div>
         <div class="hint-sep"></div>
@@ -907,8 +889,147 @@ const RIGOL_FORMATS = {
 };
 
 const DHO_TICK_S = 8e-10; // DHO800: 0.8 ns per tick (legacy, unused now)
-const FILE_HDR_SIZE = 128; // fixed file header size
-const CH_HDR_SIZE = 140;   // per-channel header size (from file header offset 0x10)
+const FILE_HDR_SIZE = 128; // legacy fallback path only
+const CH_HDR_SIZE = 140;   // legacy fallback path only
+
+// ============================================================
+// CHANNEL BLOCK LOCATOR
+// ------------------------------------------------------------
+// Older versions located channels by scanning the file for the literal
+// bytes "CH1".."CH4". That silently drops every channel whose probe was
+// renamed (VOUT / VSW / IL / ...), which is the normal case on power rails.
+//
+// Real RG03 layout (verified against DHO814 captures):
+//   file header            16 bytes   ("RG03", size, pad, waveform count)
+//   per channel           156 bytes   header  +  nPoints * 4 bytes of float32
+//   channel label          block + 112  (null-padded ASCII, 16 bytes)
+//   channel data           block + 156
+// Instead of hardcoding those numbers we derive them from the file size:
+//   stride = (fileSize - fileHdr) / nWaveforms,  chHdr = stride - nPoints*4
+// which adapts to other memory depths and models. The candidate that yields
+// one shared label offset across every channel wins.
+// ============================================================
+
+const FILE_HDR_CANDIDATES = [16, 8, 12, 20, 24, 28, 32, 48, 64, 104, 128];
+const LABEL_SCAN_FROM = 32;
+const MAX_FIELD = 16;
+
+// A channel label is a short, null-terminated, printable ASCII run with no
+// separators. That filter rejects the "DHO814:DHO8A262405618" model string
+// and the "9:8:43" time string that share the same header.
+function readLabel(u8, off) {
+  let len = 0;
+  while (len < MAX_FIELD && off + len < u8.length && u8[off + len] !== 0) len++;
+  if (len === 0 || len > MAX_FIELD - 1) return null;
+  for (let i = 0; i < len; i++) {
+    const c = u8[off + i];
+    if (c < 0x21 || c > 0x7E) return null;
+    const ch = String.fromCharCode(c);
+    if (ch === ':' || ch === '/' || ch === '\\') return null;
+  }
+  return u8.slice(off, off + len);
+}
+
+function labelCandidates(u8, blockStart, chHdr) {
+  const out = [];
+  for (let off = blockStart + LABEL_SCAN_FROM; off <= blockStart + chHdr - 1; off += 4) {
+    const bytes = readLabel(u8, off);
+    if (bytes) out.push({ off, len: bytes.length });
+  }
+  return out;
+}
+
+// Fraction of plausible float32 values at the start of a data slice. Used to
+// rank competing layouts when no shared label offset can be established.
+function cleanliness(buffer, dataStart, samples) {
+  const n = Math.min(samples, Math.floor((buffer.byteLength - dataStart) / 4));
+  if (n < 16) return -1;
+  const view = new Float32Array(buffer, dataStart, n);
+  let good = 0;
+  for (let i = 0; i < n; i++) {
+    const v = view[i];
+    if (Number.isFinite(v) && Math.abs(v) > 1e-30 && Math.abs(v) < 1e7) good++;
+  }
+  return good / n;
+}
+
+function locateChannelBlocks(buffer, nWaveforms, nPoints) {
+  if (!Number.isInteger(nWaveforms) || nWaveforms < 1 || nWaveforms > 16) return null;
+  if (!Number.isInteger(nPoints) || nPoints < 64 || nPoints > (1 << 28)) return null;
+
+  const u8 = new Uint8Array(buffer);
+  const dataBytes = nPoints * 4;
+  const labelled = [];
+  let bestPlain = null;
+
+  for (const fileHdr of FILE_HDR_CANDIDATES) {
+    if (fileHdr % 4 !== 0) continue;          // Float32Array views need 4-byte alignment
+    const total = buffer.byteLength - fileHdr;
+    if (total <= 0 || total % nWaveforms !== 0) continue;
+    const stride = total / nWaveforms;
+    const chHdr = stride - dataBytes;
+    if (chHdr < 32 || chHdr > 4096) continue;
+    if (chHdr % 4 !== 0 || stride % 4 !== 0) continue;
+
+    let ok = true;
+    for (let k = 0; k < nWaveforms; k++) {
+      const ds = fileHdr + k * stride + chHdr;
+      if (ds < 0 || ds + dataBytes > buffer.byteLength) { ok = false; break; }
+    }
+    if (!ok) continue;
+
+    const perCh = [];
+    let score = 0;
+    for (let k = 0; k < nWaveforms; k++) {
+      const bs = fileHdr + k * stride;
+      perCh.push(labelCandidates(u8, bs, chHdr));
+      score += cleanliness(buffer, bs + chHdr, 20000);
+    }
+
+    // Labels sit at the same offset inside every channel header; a shared
+    // offset is far stronger evidence than "last string wins".
+    const common = new Set(perCh[0].map(c => c.off - fileHdr));
+    for (let k = 1; k < nWaveforms; k++) {
+      const rel = new Set(perCh[k].map(c => c.off - (fileHdr + k * stride)));
+      for (const v of Array.from(common)) if (!rel.has(v)) common.delete(v);
+    }
+    const labelRel = common.size ? Math.max(...common) : null;
+
+    const build = (rel) => {
+      const metas = [];
+      for (let k = 0; k < nWaveforms; k++) {
+        const bs = fileHdr + k * stride;
+        let name = null;
+        if (rel !== null) {
+          const b = readLabel(u8, bs + rel);
+          if (b) name = String.fromCharCode.apply(null, b);
+        } else if (perCh[k].length) {
+          const pick = perCh[k][perCh[k].length - 1];
+          const b = readLabel(u8, pick.off);
+          if (b) name = String.fromCharCode.apply(null, b);
+        }
+        metas.push({
+          name: name || ('CH' + (k + 1)),
+          chNumber: k + 1,
+          dataStart: bs + chHdr,
+        });
+      }
+      return { fileHdrSize: fileHdr, chHdrSize: chHdr, stride, labelRel, channels: metas };
+    };
+
+    if (labelRel !== null) {
+      labelled.push({ r: build(labelRel), score });
+    } else if (!bestPlain || score > bestPlain.score) {
+      bestPlain = { r: build(null), score };
+    }
+  }
+
+  if (labelled.length) {
+    labelled.sort((a, b) => b.score - a.score);
+    return labelled[0].r;
+  }
+  return bestPlain ? bestPlain.r : null;
+}
 
 function parseRigolBin(buffer) {
   if (buffer.byteLength < 24) throw new Error('文件过小，无法解析');
@@ -923,10 +1044,10 @@ function parseRigolBin(buffer) {
   // File size and waveform count (little-endian uint32)
   const declaredSize = dv.getUint32(4, true);
   const nWaveforms = dv.getUint32(0x0C, true);
-
-  // Read header size & n_points (varies by format)
-  // hdrSize (0x10) = per-channel header size (140 for RG03)
-  const chHdrSize = dv.getUint32(0x10, true);
+  // The field at 0x10 is NOT the per-channel header size on RG03 captures: it
+  // reads 140 while the real header is 156 bytes. Keep it only for the legacy
+  // fallback path below.
+  const chHdrField = dv.getUint32(0x10, true);
   const nPoints = dv.getUint32(0x1C, true);
 
   // Read x_increment as f64 from file header offset 0x30
@@ -955,49 +1076,74 @@ function parseRigolBin(buffer) {
   const tMatch = headerStr.match(/(\d+:\d+:\d+)/);
   if (tMatch) time = tMatch[1];
 
-  // File header is FILE_HDR_SIZE bytes; each channel block = chHdrSize + nPoints*4 data
-  const fileHdrSize = FILE_HDR_SIZE;
-  const perChHdr = chHdrSize || CH_HDR_SIZE;
+  // ---- Preferred path: derive every channel block from the file geometry ----
+  // No reliance on "CH1".."CH4" markers, so renamed probes (VOUT / VSW / IL ...)
+  // are all found, and each slice starts on the exact sample.
+  let channels = [];
+  let perChHdr = CH_HDR_SIZE;
+  const layout = locateChannelBlocks(buffer, nWaveforms, nPoints);
 
-  // Determine channel data offsets: find "CH1\0" "CH2\0" "CH3\0" "CH4\0" strings
-  const channels = [];
-  const searchLimit = Math.min(buffer.byteLength, fileHdrSize + (perChHdr + nPoints * 4 + 256) * nWaveforms);
-
-  const findOffsets = [];
-  for (let i = fileHdrSize; i < searchLimit - 4; i++) {
-    if (u8[i] === 0x43 && u8[i+1] === 0x48 && u8[i+3] === 0x00 &&
-        u8[i+2] >= 0x31 && u8[i+2] <= 0x34) {
-      findOffsets.push({ ch: u8[i+2] - 0x31 + 1, headerStart: i });
+  if (layout) {
+    perChHdr = layout.chHdrSize;
+    for (const meta of layout.channels) {
+      const view = new Float32Array(buffer, meta.dataStart, nPoints);
+      const clean = clipOutliers(view);
+      channels.push({
+        name: meta.name,
+        chNumber: meta.chNumber,
+        samples: clean.values,
+        originalCount: clean.originalCount,
+        nOutliers: clean.nOutliers,
+        min: clean.min,
+        max: clean.max,
+        mean: clean.mean,
+        std: clean.std,
+        xIncrement: xIncrement,
+        sampleInterval: xIncrement,
+        enabled: true,
+      });
     }
-  }
+  } else {
+    // ---- Legacy fallback: scan for literal "CH1".."CH4" markers ----
+    const fileHdrSize = FILE_HDR_SIZE;
+    perChHdr = chHdrField || CH_HDR_SIZE;
+    const searchLimit = Math.min(buffer.byteLength, fileHdrSize + (perChHdr + nPoints * 4 + 256) * nWaveforms);
 
-  // For each detected channel marker, data starts at headerStart + perChHdr
-  // and runs for exactly nPoints float32 samples.
-  for (let i = 0; i < findOffsets.length; i++) {
-    const { ch, headerStart } = findOffsets[i];
-    const dataStart = headerStart + perChHdr;
-    const dataEnd = dataStart + nPoints * 4;
-    // Guard against overrun for the last channel
-    const safeEnd = Math.min(dataEnd, buffer.byteLength);
-    const nAvail = Math.floor((safeEnd - dataStart) / 4);
+    const findOffsets = [];
+    for (let i = fileHdrSize; i < searchLimit - 4; i++) {
+      if (u8[i] === 0x43 && u8[i+1] === 0x48 && u8[i+3] === 0x00 &&
+          u8[i+2] >= 0x31 && u8[i+2] <= 0x34) {
+        findOffsets.push({ ch: u8[i+2] - 0x31 + 1, headerStart: i });
+      }
+    }
 
-    const view = new Float32Array(buffer, dataStart, nAvail);
-    const clean = clipOutliers(view);
+    for (let i = 0; i < findOffsets.length; i++) {
+      const { ch, headerStart } = findOffsets[i];
+      const dataStart = headerStart + perChHdr;
+      const dataEnd = dataStart + nPoints * 4;
+      // Guard against overrun for the last channel
+      const safeEnd = Math.min(dataEnd, buffer.byteLength);
+      const nAvail = Math.floor((safeEnd - dataStart) / 4);
+      if (nAvail <= 0) continue;
 
-    channels.push({
-      name: 'CH' + ch,
-      chNumber: ch,
-      samples: clean.values,
-      originalCount: clean.originalCount,
-      nOutliers: clean.nOutliers,
-      min: clean.min,
-      max: clean.max,
-      mean: clean.mean,
-      std: clean.std,
-      xIncrement: xIncrement,
-      sampleInterval: xIncrement,
-      enabled: true,
-    });
+      const view = new Float32Array(buffer, dataStart, nAvail);
+      const clean = clipOutliers(view);
+
+      channels.push({
+        name: 'CH' + ch,
+        chNumber: ch,
+        samples: clean.values,
+        originalCount: clean.originalCount,
+        nOutliers: clean.nOutliers,
+        min: clean.min,
+        max: clean.max,
+        mean: clean.mean,
+        std: clean.std,
+        xIncrement: xIncrement,
+        sampleInterval: xIncrement,
+        enabled: true,
+      });
+    }
   }
 
   // Compute sample rate (use first channel's x_increment, or estimate from total)
@@ -1027,7 +1173,7 @@ function parseRigolBin(buffer) {
     model, serial, date, time,
     fileSize: buffer.byteLength,
     declaredSize,
-    nWaveforms,
+    nWaveforms: channels.length,
     chHdrSize: perChHdr,
     nPoints,
     sampleInterval,
@@ -2405,24 +2551,6 @@ $('btnToggleRight').addEventListener('click', () => {
   document.querySelector('main').classList.toggle('right-collapsed');
   $('btnToggleRight').classList.toggle('active');
   resizeChartsSoon();
-});
-
-// KEYBOARD SHORTCUTS
-// 左侧面板「鼠标操作 / 快捷键」里列出的快捷键在这里落地。
-// 输入类元素获得焦点时忽略，避免和用户打字冲突。
-document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
-  const t = e.target;
-  if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-
-  const k = e.key.toLowerCase();
-  if (k === 'f') {           // 恢复完整波形显示
-    e.preventDefault();
-    $('btnFullZoom').click();
-  } else if (k === 'c') {    // 开关 T1/T2 光标
-    e.preventDefault();
-    $('btnToggleCursors').click();
-  }
 });
 
 // Initial status
